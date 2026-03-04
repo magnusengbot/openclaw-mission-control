@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+import ipaddress
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -57,6 +59,57 @@ class GatewayTemplateSyncQuery:
 
 class GatewaySessionService(OpenClawDBService):
     """Read/query gateway runtime session state for user-facing APIs."""
+
+    @staticmethod
+    def _validate_direct_gateway_url(raw_url: str, *, allow_private_host: bool) -> None:
+        """Validate user-supplied gateway URLs to reduce SSRF exposure.
+
+        Rules:
+        - only ws/wss/http/https schemes
+        - disallow embedded credentials
+        - disallow localhost / private / loopback / link-local hosts unless explicitly allowed
+        """
+
+        parsed = urlparse(raw_url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"ws", "wss", "http", "https"}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="gateway_url must use ws/wss/http/https",
+            )
+
+        if parsed.username or parsed.password:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="gateway_url must not include credentials",
+            )
+
+        host = (parsed.hostname or "").strip().lower()
+        if not host:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="gateway_url must include a valid hostname",
+            )
+
+        if allow_private_host:
+            return
+
+        if host == "localhost":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="gateway_url localhost is not allowed for direct queries",
+            )
+
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return
+
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="gateway_url private/link-local/loopback hosts are not allowed",
+            )
 
     def __init__(self, session: AsyncSession) -> None:
         super().__init__(session)
@@ -122,6 +175,8 @@ class GatewaySessionService(OpenClawDBService):
                 if organization_id is not None:
                     gateway_query = gateway_query.filter_by(organization_id=organization_id)
                 gateway = await gateway_query.first(self.session)
+            self._validate_direct_gateway_url(raw_url, allow_private_host=gateway is not None)
+
             allow_insecure_tls = (
                 params.gateway_allow_insecure_tls
                 if params.gateway_allow_insecure_tls is not None
