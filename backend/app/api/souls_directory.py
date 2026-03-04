@@ -47,7 +47,14 @@ async def search(
     _actor: ActorContext = ADMIN_OR_AGENT_DEP,
 ) -> SoulsDirectorySearchResponse:
     """Search souls-directory entries by handle/slug query text."""
-    refs = await souls_directory.list_souls_directory_refs()
+    try:
+        refs = await souls_directory.list_souls_directory_refs()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
     matches = souls_directory.search_souls(refs, query=q, limit=limit)
     items = [
         SoulsDirectorySoulRef(
