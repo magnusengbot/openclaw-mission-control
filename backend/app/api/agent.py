@@ -742,6 +742,7 @@ async def create_task(
         task_id=task.id,
         message=f"Task created by lead: {task.title}.",
         agent_id=agent_ctx.agent.id,
+        board_id=task.board_id,
     )
     await session.commit()
     if task.assigned_agent_id:

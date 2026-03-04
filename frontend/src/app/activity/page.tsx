@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import { SignedIn, SignedOut, useAuth } from "@/auth/clerk";
 import { Activity as ActivityIcon } from "lucide-react";
@@ -82,6 +83,7 @@ type FeedItem = {
   created_at: string;
   event_type: FeedEventType;
   message: string | null;
+  source_event_id: string | null;
   agent_id: string | null;
   actor_name: string;
   actor_role: string | null;
@@ -117,6 +119,9 @@ const formatShortTimestamp = (value: string) => {
     minute: "2-digit",
   });
 };
+
+const feedItemElementId = (id: string): string =>
+  `activity-item-${id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
 const normalizeAgent = (agent: AgentRead): Agent => ({
   ...agent,
@@ -205,7 +210,13 @@ const eventPillClass = (eventType: FeedEventType): string => {
   return "border-slate-200 bg-slate-100 text-slate-700";
 };
 
-const FeedCard = memo(function FeedCard({ item }: { item: FeedItem }) {
+const FeedCard = memo(function FeedCard({
+  item,
+  isHighlighted = false,
+}: {
+  item: FeedItem;
+  isHighlighted?: boolean;
+}) {
   const message = (item.message ?? "").trim();
   const authorAvatar = (item.actor_name[0] ?? "A").toUpperCase();
   const taskHref =
@@ -215,7 +226,15 @@ const FeedCard = memo(function FeedCard({ item }: { item: FeedItem }) {
   const boardHref = item.board_id ? `/boards/${item.board_id}` : null;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-4 transition hover:border-slate-300">
+    <div
+      id={feedItemElementId(item.id)}
+      className={cn(
+        "scroll-mt-28 rounded-xl border bg-white p-4 transition",
+        isHighlighted
+          ? "border-blue-300 ring-2 ring-blue-200"
+          : "border-slate-200 hover:border-slate-300",
+      )}
+    >
       <div className="flex items-start gap-3">
         <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-700">
           {authorAvatar}
@@ -302,7 +321,15 @@ export default function ActivityPage() {
   }, []);
 
   const { isSignedIn } = useAuth();
+  const searchParams = useSearchParams();
   const isPageActive = usePageActive();
+  const selectedEventId = useMemo(() => {
+    const value = searchParams.get("eventId");
+    if (!value) return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }, [searchParams]);
+  const [highlightedFeedItemId, setHighlightedFeedItemId] = useState<string | null>(null);
 
   const membershipQuery = useGetMyMembershipApiV1OrganizationsMeMemberGet<
     getMyMembershipApiV1OrganizationsMeMemberGetResponse,
@@ -409,6 +436,7 @@ export default function ActivityPage() {
         created_at: event.created_at,
         event_type: event.event_type,
         message: event.message ?? null,
+        source_event_id: event.id,
         agent_id: author.id,
         actor_name: author.name,
         actor_role: author.role,
@@ -435,6 +463,7 @@ export default function ActivityPage() {
         created_at: comment.created_at,
         event_type: "task.comment",
         message: comment.message ?? null,
+        source_event_id: null,
         agent_id: author.id,
         actor_name: author.name,
         actor_role: author.role,
@@ -502,6 +531,7 @@ export default function ActivityPage() {
         created_at: stamp,
         event_type: kind,
         message,
+        source_event_id: null,
         agent_id: author.id,
         actor_name: author.name,
         actor_role: author.role,
@@ -528,6 +558,7 @@ export default function ActivityPage() {
         created_at: memory.created_at,
         event_type: command ? "board.command" : "board.chat",
         message: content || null,
+        source_event_id: null,
         agent_id: null,
         actor_name: actorName,
         actor_role: null,
@@ -593,6 +624,7 @@ export default function ActivityPage() {
         created_at: stamp,
         event_type: kind,
         message,
+        source_event_id: null,
         agent_id: agent.id,
         actor_name: agent.name,
         actor_role: roleFromAgent(agent),
@@ -1285,6 +1317,48 @@ export default function ActivityPage() {
     });
   }, [feedItems]);
 
+  const selectedFeedItemId = useMemo(() => {
+    if (!selectedEventId) return null;
+    const directMatch = orderedFeed.find(
+      (item) => item.source_event_id === selectedEventId,
+    );
+    if (directMatch) return directMatch.id;
+    const fallbackMatch = orderedFeed.find(
+      (item) =>
+        item.id === selectedEventId || item.id === `activity:${selectedEventId}`,
+    );
+    return fallbackMatch?.id ?? null;
+  }, [orderedFeed, selectedEventId]);
+
+  useEffect(() => {
+    if (!selectedFeedItemId) {
+      setHighlightedFeedItemId(null);
+      return;
+    }
+
+    setHighlightedFeedItemId(selectedFeedItemId);
+    const scrollTimeout = window.setTimeout(() => {
+      const element = document.getElementById(feedItemElementId(selectedFeedItemId));
+      if (!element) return;
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 50);
+
+    const clearHighlightTimeout = window.setTimeout(() => {
+      setHighlightedFeedItemId((current) =>
+        current === selectedFeedItemId ? null : current,
+      );
+    }, 4_000);
+
+    return () => {
+      window.clearTimeout(scrollTimeout);
+      window.clearTimeout(clearHighlightTimeout);
+    };
+  }, [selectedFeedItemId]);
+
+  const hasUnresolvedDeepLink = Boolean(
+    selectedEventId && !selectedFeedItemId && !isFeedLoading && !feedError,
+  );
+
   return (
     <DashboardShell>
       {isMounted ? (
@@ -1321,11 +1395,22 @@ export default function ActivityPage() {
               </div>
 
               <div className="p-8">
+                {hasUnresolvedDeepLink ? (
+                  <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+                    Requested activity item is not in the current feed window yet.
+                  </div>
+                ) : null}
                 <ActivityFeed
                   isLoading={isFeedLoading}
                   errorMessage={feedError}
                   items={orderedFeed}
-                  renderItem={(item) => <FeedCard key={item.id} item={item} />}
+                  renderItem={(item) => (
+                    <FeedCard
+                      key={item.id}
+                      item={item}
+                      isHighlighted={highlightedFeedItemId === item.id}
+                    />
+                  )}
                 />
               </div>
             </main>
