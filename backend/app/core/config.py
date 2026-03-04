@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     # OpenClaw gateway runtime compatibility
     gateway_min_version: str = "2026.02.9"
 
+    # Security hardening: deny outbound network features from Mission Control.
+    # When enabled, external fetch flows (e.g., skills pack sync, souls.directory)
+    # are blocked server-side.
+    offline_lockdown: bool = False
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "text"
@@ -80,6 +85,10 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _defaults(self) -> Self:
         if self.auth_mode == AuthMode.CLERK:
+            if self.offline_lockdown:
+                raise ValueError(
+                    "AUTH_MODE=clerk is not allowed when OFFLINE_LOCKDOWN=true.",
+                )
             if not self.clerk_secret_key.strip():
                 raise ValueError(
                     "CLERK_SECRET_KEY must be set and non-empty when AUTH_MODE=clerk.",

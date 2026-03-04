@@ -18,6 +18,7 @@ from sqlalchemy import func, or_
 from sqlmodel import col, select
 
 from app.api.deps import require_org_admin
+from app.core.config import settings
 from app.core.time import utcnow
 from app.db.session import get_session
 from app.models.gateways import Gateway
@@ -54,6 +55,14 @@ GIT_CLONE_TIMEOUT_SECONDS = 600
 GIT_REV_PARSE_TIMEOUT_SECONDS = 10
 BRANCH_NAME_ALLOWED_RE = r"^[A-Za-z0-9._/\-]+$"
 SKILLS_INDEX_READ_CHUNK_BYTES = 16 * 1024
+
+
+def _require_outbound_enabled(feature: str) -> None:
+    if settings.offline_lockdown:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"{feature} is disabled while OFFLINE_LOCKDOWN=true",
+        )
 
 
 def _normalize_pack_branch(raw_branch: str | None) -> str:
@@ -600,6 +609,7 @@ def _collect_pack_skills_with_warnings(
     branch: str,
 ) -> tuple[list[PackSkillCandidate], list[str]]:
     """Clone a pack repository and return discovered skills plus sync warnings."""
+    _require_outbound_enabled("Skill pack synchronization")
     # Defense-in-depth: validate again at point of use before invoking git.
     _validate_pack_source_url(source_url)
 
@@ -1093,6 +1103,7 @@ async def install_marketplace_skill(
     ctx: OrganizationContext = ORG_ADMIN_DEP,
 ) -> MarketplaceSkillActionResponse:
     """Install a marketplace skill by dispatching instructions to the gateway agent."""
+    _require_outbound_enabled("Skill installation from marketplace sources")
     return await _run_marketplace_skill_action(
         session=session,
         ctx=ctx,

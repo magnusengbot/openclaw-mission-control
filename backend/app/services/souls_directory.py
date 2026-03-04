@@ -10,6 +10,8 @@ from typing import Final
 
 import httpx
 
+from app.core.config import settings
+
 SOULS_DIRECTORY_BASE_URL: Final[str] = "https://souls.directory"
 SOULS_DIRECTORY_SITEMAP_URL: Final[str] = f"{SOULS_DIRECTORY_BASE_URL}/sitemap.xml"
 
@@ -71,6 +73,9 @@ async def list_souls_directory_refs(
     client: httpx.AsyncClient | None = None,
 ) -> list[SoulRef]:
     """Return cached sitemap-derived soul refs, refreshing when TTL expires."""
+    if settings.offline_lockdown:
+        raise RuntimeError("souls.directory access is disabled while OFFLINE_LOCKDOWN=true")
+
     now = time.time()
     loaded_raw = _sitemap_cache.get("loaded_at")
     loaded_at = loaded_raw if isinstance(loaded_raw, (int, float)) else 0.0
@@ -103,6 +108,9 @@ async def fetch_soul_markdown(
     client: httpx.AsyncClient | None = None,
 ) -> str:
     """Fetch raw markdown content for a specific handle/slug pair."""
+    if settings.offline_lockdown:
+        raise RuntimeError("souls.directory access is disabled while OFFLINE_LOCKDOWN=true")
+
     normalized_handle = handle.strip().strip("/")
     normalized_slug = slug.strip().strip("/")
     if normalized_slug.endswith(".md"):

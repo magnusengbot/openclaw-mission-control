@@ -93,6 +93,7 @@ cp .env.example .env
 Before startup:
 
 - Set `LOCAL_AUTH_TOKEN` to a non-placeholder value (minimum 50 characters) when `AUTH_MODE=local`.
+- Optional hardening: set `OFFLINE_LOCKDOWN=true` to disable outbound network features (skills pack sync/install from remote sources and souls.directory fetches).
 - `NEXT_PUBLIC_API_URL=auto` (default) resolves to `http(s)://<current-host>:8000`.
   - Set an explicit URL when your API is behind a reverse proxy or non-default port.
 
