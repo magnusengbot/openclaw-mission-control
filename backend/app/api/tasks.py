@@ -571,7 +571,7 @@ async def _send_lead_task_message(
         config=config,
         agent_name="Lead Agent",
         message=message,
-        deliver=False,
+        deliver=True,
     )
 
 
@@ -588,7 +588,7 @@ async def _send_agent_task_message(
         config=config,
         agent_name=agent_name,
         message=message,
-        deliver=False,
+        deliver=True,
     )
 
 
@@ -889,6 +889,42 @@ async def _notify_lead_on_task_unassigned(
             board_id=board.id,
         )
         await session.commit()
+
+
+_ACTIVE_AGENT_STATUSES = {"healthy", "online"}
+
+
+async def _resolve_assignable_agent_id(
+    session: AsyncSession,
+    *,
+    board: Board,
+    requested_agent_id: UUID | None,
+) -> tuple[UUID | None, str | None]:
+    """Return an assignable agent id.
+
+    If the requested assignee is missing/offline, fallback to board lead when available.
+    Returns (agent_id, reason) where reason is a short code for activity logging.
+    """
+    if requested_agent_id is None:
+        return None, None
+
+    requested = await Agent.objects.by_id(requested_agent_id).first(session)
+    if requested is None:
+        return None, "assignee_missing"
+    if requested.board_id and requested.board_id != board.id:
+        return None, "assignee_wrong_board"
+    if requested.status in _ACTIVE_AGENT_STATUSES:
+        return requested.id, None
+
+    lead = (
+        await Agent.objects.filter_by(board_id=board.id)
+        .filter(col(Agent.is_board_lead).is_(True))
+        .first(session)
+    )
+    if lead is not None and lead.status in _ACTIVE_AGENT_STATUSES:
+        return lead.id, "assignee_offline_fallback_to_lead"
+
+    return requested.id, None
 
 
 def _status_values(status_filter: str | None) -> list[str]:
@@ -1462,6 +1498,13 @@ async def create_task(
     if task.created_by_user_id is None and auth.user is not None:
         task.created_by_user_id = auth.user.id
 
+    resolved_assignee, assign_reason = await _resolve_assignable_agent_id(
+        session,
+        board=board,
+        requested_agent_id=task.assigned_agent_id,
+    )
+    task.assigned_agent_id = resolved_assignee
+
     normalized_deps = await validate_dependency_update(
         session,
         board_id=board.id,
@@ -1516,6 +1559,14 @@ async def create_task(
         message=f"Task created: {task.title}.",
         board_id=board.id,
     )
+    if assign_reason == "assignee_offline_fallback_to_lead":
+        record_activity(
+            session,
+            event_type="task.assignee_fallback",
+            task_id=task.id,
+            message="Assignee was offline; task auto-routed to board lead.",
+            board_id=board.id,
+        )
     await session.commit()
     await _notify_lead_on_task_create(session=session, board=board, task=task)
     if task.assigned_agent_id:
@@ -2441,11 +2492,28 @@ async def _apply_admin_task_rules(
         update.updates.get("assigned_agent_id"),
     )
     if assigned_agent_id:
-        agent = await Agent.objects.by_id(assigned_agent_id).first(session)
-        if agent is None:
+        board = await Board.objects.by_id(update.board_id).first(session)
+        if board is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-        if agent.board_id and update.task.board_id and agent.board_id != update.task.board_id:
+        resolved_assignee, assign_reason = await _resolve_assignable_agent_id(
+            session,
+            board=board,
+            requested_agent_id=assigned_agent_id,
+        )
+        update.updates["assigned_agent_id"] = resolved_assignee
+        if assign_reason == "assignee_missing":
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        if assign_reason == "assignee_wrong_board":
             raise HTTPException(status_code=status.HTTP_409_CONFLICT)
+        if assign_reason == "assignee_offline_fallback_to_lead":
+            record_activity(
+                session,
+                event_type="task.assignee_fallback",
+                task_id=update.task.id,
+                message="Assignee was offline; task auto-routed to board lead.",
+                board_id=update.board_id,
+            )
+            await session.commit()
 
 
 async def _record_task_comment_from_update(
