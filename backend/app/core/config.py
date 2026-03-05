@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # Auth mode: "clerk" for Clerk JWT auth, "local" for shared bearer token auth.
     auth_mode: AuthMode
     local_auth_token: str = ""
+    # Local/dev convenience only: allow local auth mode without bearer token.
+    # Keep disabled for any non-local deployment.
+    local_auth_disable_token: bool = False
 
     # Clerk auth (auth only; roles stored in DB)
     clerk_secret_key: str = ""
@@ -94,15 +97,16 @@ class Settings(BaseSettings):
                     "CLERK_SECRET_KEY must be set and non-empty when AUTH_MODE=clerk.",
                 )
         elif self.auth_mode == AuthMode.LOCAL:
-            token = self.local_auth_token.strip()
-            if (
-                not token
-                or len(token) < LOCAL_AUTH_TOKEN_MIN_LENGTH
-                or token.lower() in LOCAL_AUTH_TOKEN_PLACEHOLDERS
-            ):
-                raise ValueError(
-                    "LOCAL_AUTH_TOKEN must be at least 50 characters and non-placeholder when AUTH_MODE=local.",
-                )
+            if not self.local_auth_disable_token:
+                token = self.local_auth_token.strip()
+                if (
+                    not token
+                    or len(token) < LOCAL_AUTH_TOKEN_MIN_LENGTH
+                    or token.lower() in LOCAL_AUTH_TOKEN_PLACEHOLDERS
+                ):
+                    raise ValueError(
+                        "LOCAL_AUTH_TOKEN must be at least 50 characters and non-placeholder when AUTH_MODE=local.",
+                    )
         base_url = self.base_url.strip()
         if not base_url:
             raise ValueError("BASE_URL must be set and non-empty.")

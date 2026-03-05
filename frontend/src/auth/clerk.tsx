@@ -16,9 +16,14 @@ import {
 } from "@clerk/nextjs";
 
 import { isLikelyValidClerkPublishableKey } from "@/auth/clerkKey";
-import { getLocalAuthToken, isLocalAuthMode } from "@/auth/localAuth";
+import {
+  getLocalAuthToken,
+  isLocalAuthMode,
+  isLocalAuthTokenDisabled,
+} from "@/auth/localAuth";
 
 function hasLocalAuthToken(): boolean {
+  if (isLocalAuthTokenDisabled()) return true;
   return Boolean(getLocalAuthToken());
 }
 
@@ -77,11 +82,13 @@ export function useUser() {
 export function useAuth() {
   if (isLocalAuthMode()) {
     const token = getLocalAuthToken();
+    const tokenDisabled = isLocalAuthTokenDisabled();
+    const signedIn = tokenDisabled || Boolean(token);
     return {
       isLoaded: true,
-      isSignedIn: Boolean(token),
-      userId: token ? "local-user" : null,
-      sessionId: token ? "local-session" : null,
+      isSignedIn: signedIn,
+      userId: signedIn ? "local-user" : null,
+      sessionId: signedIn ? "local-session" : null,
       getToken: async () => token,
     } as const;
   }

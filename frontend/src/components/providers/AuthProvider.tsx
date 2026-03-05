@@ -8,6 +8,7 @@ import {
   clearLocalAuthToken,
   getLocalAuthToken,
   isLocalAuthMode,
+  isLocalAuthTokenDisabled,
 } from "@/auth/localAuth";
 import { LocalAuthLogin } from "@/components/organisms/LocalAuthLogin";
 
@@ -21,7 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [localMode]);
 
   if (localMode) {
-    if (!getLocalAuthToken()) {
+    if (!isLocalAuthTokenDisabled() && !getLocalAuthToken()) {
       return <LocalAuthLogin />;
     }
     return <>{children}</>;

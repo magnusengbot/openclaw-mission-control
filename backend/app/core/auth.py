@@ -433,6 +433,10 @@ async def _resolve_local_auth_context(
     session: AsyncSession,
     required: bool,
 ) -> AuthContext | None:
+    if settings.local_auth_disable_token:
+        user = await _get_or_create_local_user(session)
+        return AuthContext(actor_type="user", user=user)
+
     token = _extract_bearer_token(request.headers.get("Authorization"))
     if token is None:
         if required:
